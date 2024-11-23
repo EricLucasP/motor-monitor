@@ -1,89 +1,103 @@
-#include "ADS1X15.h"
-#include "secrets.h"
-#include <WebServer.h>
-#include <WiFi.h>
+#include "server.h"
+struct Measurement {
+  uint32_t time;
+  float phase1;
+  float phase2;
+  float phase3;
+};
 
-// from secrets.h
-static const char *ssid = ssidHide;
-static const char *password = passwordHide;
+#define Sensor1 34
+#define Sensor2 35
+#define Sensor3 36
 
-ADS1115 ADS(0x48);
-WebServer server(80);
-
-const int buffer_size = 860; // 860 amostras por segundo
-float buffer[buffer_size];
-uint8_t buffer_index = 0;
-
-uint32_t lastSendTime = 0;
-uint32_t sendInterval = 1000; // 1 segundo
+const int BUFFER_SIZE = 300; // número de medições por vez
+Measurement buffer[BUFFER_SIZE];
+int bufferIndex = 0;
 
 // Funções
-void setup();
-void loop();
-void handleRoot();
-void handleData();
-void sendData();
+void measure();
+void saveDataToFile(Measurement *data, int size);
+void taskMeasure(void *pvParameters);
+void taskSendData(void *pvParameters);
+void serverHandleClient();
+
+uint32_t startTime = 0;
+uint32_t totalTime = 0;
 
 void setup() {
-  Serial.begin(250000); // Aumentar baud rate
-  delay(100);
+  // Serial.begin(115200); // Debug serial
+  serverSetup();
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
-  }
-  Serial.println("Connected to WiFi");
-
-  // Configuração do ADS1115
-  Wire.begin();
-  Wire.setClock(400000);
-  ADS.begin();
-  ADS.setGain(0);
-  ADS.setDataRate(7);
-
-  // Configuração do servidor web
-  server.on("/", handleRoot);
-  server.on("/data", handleData);
-  server.begin();
-  Serial.println("Web Server started");
-
-  lastSendTime = millis();
+  xTaskCreatePinnedToCore(taskMeasure, "measureLoop", 10000 / sizeof(StackType_t), NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(taskSendData, "DataLoop", 10000 / sizeof(StackType_t), NULL, 1, NULL, 1);
 }
 
 void loop() {
+}
+
+void taskMeasure(void *pvParameters) {
+  while (true) {
+    measure();
+    delayMicroseconds(10);
+  }
+}
+
+int test = 0;
+void measure() {
+  if (test == -1) {
+    return;
+  }
+  if (test == 0) {
+    startTime = micros();
+  }
+  if (test >= 1800 / BUFFER_SIZE) {
+    File file = SPIFFS.open("/data.txt", FILE_APPEND);
+    totalTime = micros() - startTime;
+    file.println(totalTime);
+    file.close();
+    test = -1;
+    return;
+  }
+
+  buffer[bufferIndex].phase1 = analogRead(Sensor1);
+  buffer[bufferIndex].phase2 = analogRead(Sensor2);
+  buffer[bufferIndex].phase3 = analogRead(Sensor3);
+  bufferIndex++;
+
+  if (bufferIndex >= BUFFER_SIZE) {
+    test++;
+    saveDataToFile(buffer, BUFFER_SIZE);
+    bufferIndex = 0;
+  }
+}
+
+void saveDataToFile(Measurement *data, int size) {
+  File file = SPIFFS.open("/data.txt", FILE_APPEND);
+  if (!file) {
+    Serial.println("Erro ao abrir o arquivo para escrita");
+    return;
+  }
+
+  for (int i = 0; i < size; i++) {
+    file.print(buffer[i].time);
+    file.print(";");
+    file.print(buffer[i].phase1);
+    file.print(";");
+    file.print(buffer[i].phase2);
+    file.print(";");
+    file.println(buffer[i].phase3);
+  }
+  file.close();
+}
+
+void taskSendData(void *pvParameters) {
+  while (true) {
+    serverHandleClient();
+    vTaskDelay(1);
+  }
+}
+
+void serverHandleClient() {
   server.handleClient();
-
-  // Coleta de dados do ADS1115
-  if (!ADS.isBusy()) {
-    buffer[buffer_index++] = ADS.getValue() * ADS.toVoltage();
-    if (buffer_index >= buffer_size)
-      buffer_index = 0;
-    ADS.requestADC(0);
-  }
-
-  // Envio de dados a cada 1 segundo
-  if (millis() - lastSendTime >= sendInterval) {
-    sendData();
-    lastSendTime = millis();
-  }
-}
-
-void handleRoot() {
-  server.send(200, "text/html", "<html><body><h1>ESP32 Data</h1><div id='data'></div><script>setInterval(() => fetch('/data').then(res => res.json()).then(data => document.getElementById('data').innerHTML = data.join('<br>')), 1000);</script></body></html>");
-}
-
-void handleData() {
-  String data = "[";
-  for (int i = 0; i < buffer_size; i++) {
-    if (i > 0)
-      data += ",";
-    data += String(buffer[i], 3);
-  }
-  data += "]";
-  server.send(200, "application/json", data);
-}
-
-void sendData() {
-  handleData(); // Função para enviar dados ao cliente
+  vTaskDelay(1);
 }

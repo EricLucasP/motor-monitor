@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="highcharts.js"></script>
+    <title>Monitor de Corrente</title>
+
+    <style>
+        #container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 80%;
+        }
+
+        .chart-container,
+        .table-container {
+            width: 80%;
+            margin: 20px 0;
+        }
+
+        h1 {
+            font-size: 2rem;
+            color: #333;
+            text-align: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        table,
+        th,
+        td {
+            border: 1px solid #ccc;
+        }
+
+        th,
+        td {
+            padding: 10px;
+            text-align: center;
+        }
+
+        th {
+            background-color: #f4f4f4;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container">
+        <div class="header-container">
+            <h1>Monitor de Corrente</h1>
+            <button id="toggleButton" onclick="toggleUpdate()">Parar Atualizações</button>
+            <button id="copyButton" onclick="copyData()">Salvar Dados</button>
+        </div>
+        <div id="combinedChart" class="chart-container"></div>
+        <div id="phase1Chart" class="chart-container"></div>
+        <div id="phase2Chart" class="chart-container"></div>
+        <div id="phase3Chart" class="chart-container"></div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tempo</th>
+                        <th>Fase 1</th>
+                        <th>Fase 2</th>
+                        <th>Fase 3</th>
+                    </tr>
+                </thead>
+                <tbody id="dataTable">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let updateInterval;
+        let isUpdating = true;
+
+        function initCharts() {
+            Highcharts.chart('combinedChart', {
+                chart: {
+                    type: 'line'
+                },
+                title: {
+                    text: 'Medição das Três Fases'
+                },
+                xAxis: {
+                    type: 'datetime',
+                    tickPixelInterval: 150
+                },
+                yAxis: {
+                    title: {
+                        text: 'Corrente (A)'
+                    }
+                },
+                accessibility: {
+                    enabled: false
+                }, credits: {
+                    enabled: false,
+                },
+                series: [{
+                    name: 'Fase 1',
+                    data: []
+                }, {
+                    name: 'Fase 2',
+                    data: []
+                }, {
+                    name: 'Fase 3',
+                    data: []
+                }]
+            });
+
+            Highcharts.chart('phase1Chart', {
+                chart: {
+                    type: 'line'
+                },
+                title: {
+                    text: 'Medição da Fase 1'
+                },
+                xAxis: {
+                    type: 'datetime',
+                    tickPixelInterval: 150
+                },
+                yAxis: {
+                    title: {
+                        text: 'Corrente (A)'
+                    }
+                },
+                accessibility: {
+                    enabled: false
+                }, credits: {
+                    enabled: false,
+                },
+                series: [{
+                    name: 'Fase 1',
+                    data: []
+                }]
+            });
+
+            Highcharts.chart('phase2Chart', {
+                chart: {
+                    type: 'line'
+                },
+                title: {
+                    text: 'Medição da Fase 2'
+                },
+                xAxis: {
+                    type: 'datetime',
+                    tickPixelInterval: 150
+                },
+                yAxis: {
+                    title: {
+                        text: 'Corrente (A)'
+                    }
+                },
+                accessibility: {
+                    enabled: false
+                }, credits: {
+                    enabled: false,
+                },
+                series: [{
+                    name: 'Fase 2',
+                    data: []
+                }]
+            });
+
+            Highcharts.chart('phase3Chart', {
+                chart: {
+                    type: 'line'
+                },
+                title: {
+                    text: 'Medição da Fase 3'
+                },
+                xAxis: {
+                    type: 'datetime',
+                },
+                yAxis: {
+                    title: {
+                        text: 'Corrente (A)'
+                    }
+                },
+                accessibility: {
+                    enabled: false
+                }, credits: {
+                    enabled: false,
+                },
+                series: [{
+                    name: 'Fase 3',
+                    data: []
+                }]
+            });
+        }
+
+        function toggleUpdate() {
+            isUpdating = !isUpdating;
+            document.getElementById("toggleButton").innerText = isUpdating ? "Parar Atualizações" : "Retomar Atualizações";
+            if (isUpdating) {
+                startUpdating();
+            } else {
+                clearInterval(updateInterval);
+            }
+        }
+
+        function startUpdating() {
+            updateInterval = setInterval(fetchData, 1000);
+        }
+
+        function fetchData() {
+            if (!isUpdating) return;
+            fetch('/data').then(res => res.json()).then(data => {
+                let combinedChart = Highcharts.charts[0];
+                let phase1Chart = Highcharts.charts[1];
+                let phase2Chart = Highcharts.charts[2];
+                let phase3Chart = Highcharts.charts[3];
+                let dataTable = document.getElementById('dataTable');
+
+                dataTable.innerHTML = '';
+                data.forEach(chunk => {
+                    chunk.forEach(point => {
+                        let row = `<tr><td>${new Date(point.time).toLocaleTimeString()}</td><td>${point.phase1}</td><td>${point.phase2}</td><td>${point.phase3}</td></tr>`;
+                        dataTable.insertAdjacentHTML('beforeend', row);
+
+                        let shift = combinedChart.series[0].data.length > 10;
+                        combinedChart.series[0].addPoint([point.time, point.phase1], false, shift, true);
+                        combinedChart.series[1].addPoint([point.time, point.phase2], false, shift, true);
+                        combinedChart.series[2].addPoint([point.time, point.phase3], false, shift, true);
+
+                        phase1Chart.series[0].addPoint([point.time, point.phase1], false, shift, true);
+                        phase2Chart.series[0].addPoint([point.time, point.phase2], false, shift, true);
+                        phase3Chart.series[0].addPoint([point.time, point.phase3], false, shift, true);
+                    });
+                    combinedChart.redraw();
+                    phase1Chart.redraw();
+                    phase2Chart.redraw();
+                    phase3Chart.redraw();
+                    console.log(combinedChart.series[0].data.length);
+                });
+            });
+        }
+
+        function copyData() {
+            fetch('/data').then(res => res.json()).then(data => {
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "Tempo;Fase 1;Fase 2;Fase 3\n";
+
+                data = data.flat();
+                data.forEach(point => {
+                    let row = `${new Date(point.time).toLocaleTimeString()};${point.phase1.toFixed(3)};${point.phase2.toFixed(3)};${point.phase3.toFixed(3)}\n`;
+                    csvContent += row;
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", "dados_corrente.csv");
+                document.body.appendChild(link);
+
+                link.click();
+                document.body.removeChild(link);
+            });
+        }
+
+
+        window.onload = () => {
+            initCharts();
+            startUpdating();
+        };
+    </script>
+</body>
+
+</html>
